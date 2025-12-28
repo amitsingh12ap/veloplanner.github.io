@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Velo | Strategic Planning</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; overflow-x: hidden; }
+        .brand-gradient { background: linear-gradient(to right, #e11d48, #4f46e5); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .red-value { color: #e11d48; }
+        .emerald-value { color: #10b981; }
+        .shadow-soft { box-shadow: 0 10px 40px -10px rgba(0,0,0,0.06); }
+        .variance-text { font-size: clamp(2rem, 10cqi, 7rem); line-height: 0.9; }
+        input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        .dynamic-title { font-size: clamp(2.5rem, 8vw, 5.5rem); line-height: 1; }
+        .team-title-input { font-size: clamp(1.5rem, 5vw, 3.2rem); line-height: 1.1; }
+        .variance-container { container-type: inline-size; }
+    </style>
+</head>
+<body class="bg-[#fcfcfd] text-slate-900 min-h-screen p-3 md:p-10">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-10 bg-white p-6 md:p-10 rounded-[2.5rem] shadow-soft border border-slate-200 gap-6">
+            <div class="w-full lg:flex-1">
+                <h1 class="font-black italic tracking-tighter brand-gradient dynamic-title pb-2">Velo</h1>
+                <p class="text-slate-400 font-bold tracking-[0.4em] text-[10px] md:text-xs uppercase pl-1">Enterprise Strategic Planning</p>
+            </div>
+            <div class="flex flex-wrap gap-3 shrink-0">
+                <button onclick="exportData()" class="bg-white hover:bg-slate-50 text-slate-700 px-5 py-2.5 rounded-2xl font-bold border border-slate-200 shadow-sm flex items-center gap-2 text-xs transition-all">
+                    <i data-lucide="download" class="w-4 h-4 text-rose-600"></i> Export JSON
+                </button>
+                <button onclick="addTeam()" class="bg-[#e11d48] hover:bg-rose-700 text-white px-7 py-3 rounded-2xl font-black shadow-lg shadow-rose-100 flex items-center gap-2 hover:scale-105 transition-all text-xs">
+                    <i data-lucide="plus" class="w-5 h-5"></i> New Team
+                </button>
+            </div>
+        </header>
+
+        <div id="globalSummary" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-12"></div>
+        <div id="teamsContainer" class="space-y-16 mb-24"></div>
+    </div>
+
+    <script>
+        const ROLES = { 'Dev': 1.0, 'Lead': 0.5, 'New Joiner': 0.5, 'Custom': 0.0 };
+        const QUARTERS = {
+            'JFM': { holidays: 3, sprints: 7 }, 'AMJ': { holidays: 3, sprints: 6 },
+            'JAS': { holidays: 2, sprints: 6 }, 'OND': { holidays: 4, sprints: 6 }
+        };
+
+        const generateDefaultRoster = (count, prefix) => Array.from({length: count}, (_, i) => ({
+            id: `r-${Date.now()}-${i}`, name: `${prefix} Resource ${i+1}`, type: 'Dev', weight: 1.0
+        }));
+
+        let teams = JSON.parse(localStorage.getItem('velo_v3')) || [
+            { id: 't1', name: 'Android', weeks: 12, manualDeduction: 1.4, basisRoadmap: 19, activeQ: 'JFM', dmRedux: 40, roster: generateDefaultRoster(7, 'Android') },
+            { id: 't2', name: 'iOS', weeks: 12, manualDeduction: 1.0, basisRoadmap: 17, activeQ: 'JFM', dmRedux: 40, roster: generateDefaultRoster(6, 'iOS') }
+        ];
+
+        function calculate(t) {
+            const rawFTE = t.roster.reduce((s, r) => s + (parseFloat(r.weight) || 0), 0);
+            const holidayWeeks = (rawFTE * QUARTERS[t.activeQ].holidays) / 5;
+            const gross = rawFTE * t.weeks;
+            const poolAfter40 = gross * 0.60;
+            const ktlo20 = poolAfter40 * 0.20;
+            const netBW = poolAfter40 - ktlo20 - holidayWeeks - t.manualDeduction;
+            const roadmapBW = netBW * (1 - (t.dmRedux / 100));
+            const variance = roadmapBW - t.basisRoadmap;
+            const velocity = t.basisRoadmap / QUARTERS[t.activeQ].sprints;
+            return { rawFTE, gross, netBW, roadmapBW, variance, velocity };
+        }
+
+        // IMPROVED: Keeps focus on inputs by avoiding full re-render
+        function updateMember(tId, rId, field, val) {
+            const t = teams.find(x => x.id === tId);
+            const r = t.roster.find(x => x.id === rId);
+            r[field] = field === 'weight' ? parseFloat(val) : val;
+            
+            if (field === 'type') {
+                if (val !== 'Custom') r.weight = ROLES[val];
+                render(); // Full render only for structure changes
+            } else {
+                save(); refreshTeamUI(tId);
+            }
+        }
+
+        function updateTeam(id, field, val) {
+            const t = teams.find(x => x.id === id);
+            t[field] = (field === 'name' || field === 'activeQ') ? val : parseFloat(val);
+            save();
+            if(field === 'activeQ') render(); // Change of quarter requires layout update
+            else refreshTeamUI(id); // Name changes and numbers only update specific elements
+        }
+
+        function refreshTeamUI(id) {
+            const t = teams.find(x => x.id === id);
+            const m = calculate(t);
+            // Targeted Element Updates (No Keyboard Disappear)
+            document.getElementById(`net-bw-${id}`).innerText = m.netBW.toFixed(2);
+            document.getElementById(`road-bw-${id}`).innerText = m.roadmapBW.toFixed(2);
+            document.getElementById(`vel-${id}`).innerText = m.velocity.toFixed(2);
+            const varEl = document.getElementById(`var-${id}`);
+            varEl.innerText = m.variance.toFixed(4);
+            varEl.className = `variance-text font-black tracking-tighter ${m.variance < 0 ? 'red-value' : 'emerald-value'}`;
+            updateGlobal();
+        }
+
+        function updateGlobal() {
+            let fte = 0, vari = 0;
+            teams.forEach(t => { const m = calculate(t); fte += m.rawFTE; vari += m.variance; });
+            document.getElementById('globalSummary').innerHTML = `
+                <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-soft">
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total FTE</p>
+                    <h4 class="text-3xl font-black text-slate-900">${fte.toFixed(1)}</h4>
+                </div>
+                <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-soft">
+                    <p class="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1">Active Teams</p>
+                    <h4 class="text-3xl font-black text-slate-900">${teams.length}</h4>
+                </div>
+                <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-soft border-t-rose-600 border-t-4">
+                    <p class="text-[10px] font-black text-rose-600 uppercase tracking-widest mb-1">Net Variance</p>
+                    <h4 class="text-3xl font-black ${vari < 0 ? 'red-value' : 'emerald-value'}">${vari.toFixed(2)}</h4>
+                </div>
+                <div class="bg-indigo-600 p-6 rounded-3xl shadow-lg flex items-center justify-between text-white">
+                    <div><p class="text-[10px] font-black opacity-60 uppercase mb-1">Status</p><h4 class="text-xl font-black">${vari < 0 ? 'Over Cap' : 'Balanced'}</h4></div>
+                    <i data-lucide="${vari < 0 ? 'alert-circle' : 'shield-check'}" class="opacity-30"></i>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        function addTeam() { teams.push({ id: 't'+Date.now(), name: 'New Team', weeks: 12, manualDeduction: 0, basisRoadmap: 15, activeQ: 'JFM', dmRedux: 40, roster: [] }); render(); }
+        function removeRes(tId, rId) { const t = teams.find(x => x.id === tId); t.roster = t.roster.filter(x => x.id !== rId); render(); }
+        function removeTeam(id) { if(confirm('Delete team?')) { teams = teams.filter(x => x.id !== id); render(); } }
+        function save() { localStorage.setItem('velo_v3', JSON.stringify(teams)); }
+        function exportData() { const a = document.createElement('a'); a.href = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(teams)); a.download = "Velo_Strategic_Plan.json"; a.click(); }
+
+        function render() {
+            save();
+            const container = document.getElementById('teamsContainer');
+            container.innerHTML = teams.map(t => {
+                const m = calculate(t);
+                return `
+                <div class="bg-white rounded-[2.5rem] md:rounded-[4rem] overflow-hidden shadow-soft border border-slate-200 group transition-all hover:shadow-md">
+                    <div class="p-8 md:p-12 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6">
+                        <div class="flex-1 w-full">
+                            <input type="text" value="${t.name}" oninput="updateTeam('${t.id}', 'name', this.value)" class="bg-transparent font-black outline-none focus:text-indigo-600 w-full text-slate-900 italic tracking-tighter team-title-input">
+                            <div class="flex flex-wrap gap-2 md:gap-4 mt-5">
+                                ${Object.keys(QUARTERS).map(q => `
+                                    <button onclick="updateTeam('${t.id}', 'activeQ', '${q}')" class="px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${t.activeQ === q ? 'bg-[#e11d48] text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-rose-600 hover:text-rose-600'}">${q}</button>
+                                `).join('')}
+                            </div>
+                        </div>
+                        <button onclick="removeTeam('${t.id}')" class="text-slate-300 hover:text-rose-600 transition-opacity"><i data-lucide="trash-2" class="w-8 h-8"></i></button>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-12">
+                        <div class="lg:col-span-4 p-8 border-r border-slate-100 bg-slate-50/20">
+                            <div class="space-y-4 max-h-[450px] overflow-y-auto pr-2 custom-scrollbar">
+                                ${t.roster.map(r => `
+                                    <div class="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col gap-2 relative group/res shadow-sm">
+                                        <button onclick="removeRes('${t.id}', '${r.id}')" class="absolute top-3 right-3 opacity-0 group-hover/res:opacity-100 text-slate-300 hover:text-rose-600 transition-all">×</button>
+                                        <input type="text" value="${r.name}" oninput="updateMember('${t.id}', '${r.id}', 'name', this.value)" class="bg-transparent text-xs font-bold text-slate-700 outline-none w-full truncate">
+                                        <div class="flex items-center gap-2">
+                                            <select onchange="updateMember('${t.id}', '${r.id}', 'type', this.value)" class="bg-slate-50 border border-slate-200 rounded-lg text-[9px] p-2 flex-1 font-bold text-slate-500">
+                                                ${Object.keys(ROLES).map(role => `<option value="${role}" ${r.type === role ? 'selected' : ''}>${role}</option>`).join('')}
+                                            </select>
+                                            <input type="number" step="0.1" value="${r.weight}" oninput="updateMember('${t.id}', '${r.id}', 'weight', this.value)" class="w-14 bg-slate-50 border border-slate-200 rounded-xl text-xs text-center p-1.5 font-black text-rose-600" ${r.type !== 'Custom' ? 'disabled' : ''}>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                                <button onclick="batchAdd('${t.id}')" class="w-full p-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 font-bold hover:bg-slate-50 hover:border-indigo-200 transition-all text-xs">+ Add Member</button>
+                            </div>
+                        </div>
+
+                        <div class="lg:col-span-8 p-10 grid grid-cols-1 md:grid-cols-2 gap-12">
+                            <div class="space-y-12">
+                                <div class="grid grid-cols-2 gap-6">
+                                    <div class="space-y-2"><label class="text-[10px] font-black text-slate-400 uppercase tracking-widest italic">Weeks</label><input type="number" value="${t.weeks}" oninput="updateTeam('${t.id}', 'weeks', this.value)" class="w-full bg-slate-50 p-4 rounded-2xl border border-slate-200 font-bold outline-none text-xl focus:border-indigo-600"></div>
+                                    <div class="space-y-2"><label class="text-[10px] font-black text-rose-600 uppercase tracking-widest italic">Leaves</label><input type="number" step="0.1" value="${t.manualDeduction}" oninput="updateTeam('${t.id}', 'manualDeduction', this.value)" class="w-full bg-slate-50 p-4 rounded-2xl border border-rose-100 font-bold outline-none text-xl text-rose-600"></div>
+                                </div>
+                                <div class="p-8 bg-indigo-50/50 rounded-[2.5rem] border border-indigo-100 text-center relative overflow-hidden">
+                                    <div class="text-[10px] font-black text-indigo-400 uppercase mb-3 tracking-widest italic">Avg Sprint Velocity</div>
+                                    <div id="vel-${t.id}" class="text-4xl font-black text-indigo-600 tracking-tighter">${m.velocity.toFixed(2)}</div>
+                                    <p class="text-[9px] text-indigo-300 mt-2 font-bold uppercase italic">Target for ${QUARTERS[t.activeQ].sprints} Sprints</p>
+                                </div>
+                                <div class="space-y-4">
+                                    <div class="flex justify-between items-center"><label class="text-[10px] font-black text-slate-400 uppercase tracking-widest italic">DM Usage (%)</label><span class="text-xs font-black text-indigo-600">${t.dmRedux}%</span></div>
+                                    <input type="range" min="0" max="100" value="${t.dmRedux}" oninput="updateTeam('${t.id}', 'dmRedux', this.value)" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-rose-600">
+                                    <div class="flex justify-between text-[9px] font-bold text-slate-400 px-1">
+                                        <span>Net BW: <span id="net-bw-${t.id}">${m.netBW.toFixed(2)}</span></span>
+                                        <span class="text-indigo-600 font-black">Roadmap: <span id="road-bw-${t.id}">${m.roadmapBW.toFixed(2)}</span></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-slate-900 p-8 md:p-12 rounded-[2.5rem] md:rounded-[4rem] text-right flex flex-col justify-center relative shadow-2xl overflow-hidden min-h-[300px] border border-slate-800 variance-container">
+                                <div class="absolute -top-20 -left-20 w-64 h-64 bg-rose-600/10 rounded-full blur-[100px]"></div>
+                                <div class="relative z-10 w-full space-y-8">
+                                    <div class="space-y-4">
+                                        <div class="flex items-center justify-end gap-2"><span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span><label class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] italic">Roadmap Target</label></div>
+                                        <div class="flex items-center justify-end gap-4 bg-white/5 p-4 rounded-3xl border border-white/10 shadow-inner group">
+                                            <button onclick="updateTeam('${t.id}', 'basisRoadmap', ${t.basisRoadmap - 0.5})" class="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-800 text-white hover:bg-rose-600 transition-all active:scale-95 shadow-lg"><i data-lucide="minus" class="w-4 h-4"></i></button>
+                                            <input type="number" id="target-val-${t.id}" step="0.1" value="${t.basisRoadmap}" oninput="updateTeam('${t.id}', 'basisRoadmap', this.value)" class="bg-transparent text-4xl md:text-5xl font-black text-white outline-none w-32 text-center">
+                                            <button onclick="updateTeam('${t.id}', 'basisRoadmap', ${t.basisRoadmap + 0.5})" class="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-800 text-white hover:bg-emerald-500 transition-all active:scale-95 shadow-lg"><i data-lucide="plus" class="w-4 h-4"></i></button>
+                                        </div>
+                                    </div>
+                                    <div class="pt-8 border-t border-white/5">
+                                        <div class="flex flex-col items-end">
+                                            <div class="text-[10px] font-black text-slate-500 uppercase mb-2 tracking-widest">Variance</div>
+                                            <div id="var-${t.id}" class="variance-text font-black tracking-tighter transition-all duration-500 ${m.variance < 0 ? 'red-value' : 'emerald-value'}">${m.variance.toFixed(4)}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="absolute bottom-6 left-10 opacity-5 pointer-events-none"><i data-lucide="target" class="w-32 h-32 text-white"></i></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+            lucide.createIcons();
+            updateGlobal();
+        }
+
+        function batchAdd(tId) {
+            const t = teams.find(x => x.id === tId);
+            t.roster.push({ id: `r-${Date.now()}`, name: `Resource ${t.roster.length + 1}`, type: 'Dev', weight: 1.0 });
+            render();
+        }
+
+        render();
+    </script>
+</body>
+</html>
